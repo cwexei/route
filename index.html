@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OneMap Multi-Location Route Planner</title>
+    <style>
+        #map {
+            height: 400px;
+            width: 100%;
+            margin-bottom: 20px;
+        }
+        #route-form {
+            margin-bottom: 20px;
+        }
+        #route-form input {
+            display: block;
+            width: 100%;
+            margin-bottom: 10px;
+            padding: 10px;
+            font-size: 16px;
+        }
+        #route-form button {
+            padding: 10px 20px;
+            font-size: 16px;
+            cursor: pointer;
+        }
+        #directions-panel {
+            margin-top: 20px;
+            padding: 10px;
+            background-color: #f9f9f9;
+            border: 1px solid #ddd;
+        }
+        #order-panel {
+            margin-top: 20px;
+            padding: 10px;
+            background-color: #f9f9f9;
+            border: 1px solid #ddd;
+        }
+    </style>
+</head>
+<body>
+    <h1>OneMap Multi-Location Route Planner</h1>
+    <div id="map"></div>
+    <form id="route-form">
+        <input type="text" id="origin" placeholder="Starting Point (e.g., Marina Bay Sands)" required>
+        <input type="text" id="stop1" placeholder="Stop 1 (optional)">
+        <input type="text" id="stop2" placeholder="Stop 2 (optional)">
+        <input type="text" id="stop3" placeholder="Stop 3 (optional)">
+        <input type="text" id="stop4" placeholder="Stop 4 (optional)">
+        <input type="text" id="destination" placeholder="Destination (e.g., Orchard Road)" required>
+        <button type="submit">Plan Route</button>
+    </form>
+    <div id="directions-panel"></div>
+    <div id="order-panel">
+        <h3>Optimized Route Order</h3>
+        <ul id="order-list"></ul>
+    </div>
+
+    <script>
+        let map;
+        let routeLayer;
+
+        // Your OneMap API Key
+        const ONE_MAP_API_KEY = 'eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiI2NzQyZmQ4ZjQ1ZDI3MjdkOTk2ZTcyYWI5YWJkMThmYiIsImlzcyI6Imh0dHA6Ly9pbnRlcm5hbC1hbGItb20tcHJkZXppdC1pdC1uZXctMTYzMzc5OTU0Mi5hcC1zb3V0aGVhc3QtMS5lbGIuYW1hem9uYXdzLmNvbS9hcGkvdjIvdXNlci9wYXNzd29yZCIsImlhdCI6MTc0MTg4MTI3NSwiZXhwIjoxNzQyMTQwNDc1LCJuYmYiOjE3NDE4ODEyNzUsImp0aSI6IkJwdUtrZW5FQlVxYjlMSnkiLCJ1c2VyX2lkIjo2MzQ4LCJmb3JldmVyIjpmYWxzZX0.J6K2dGt1JJ-hZ08Gfra44wMRoQ2keRLTNgYxAEcfE-g';
+
+        function initMap() {
+            // Initialize the map centered on Singapore
+            map = L.map('map').setView([1.3521, 103.8198], 12); // Center on Singapore
+            L.tileLayer('https://maps-{s}.onemap.sg/v3/Default/{z}/{x}/{y}.png', {
+                attribution: '© OneMap'
+            }).addTo(map);
+
+            // Add a form submit listener
+            document.getElementById('route-form').addEventListener('submit', function(event) {
+                event.preventDefault();
+                planRoute();
+            });
+        }
+
+        async function planRoute() {
+            const origin = document.getElementById('origin').value;
+            const destination = document.getElementById('destination').value;
+            const stops = [
+                document.getElementById('stop1').value,
+                document.getElementById('stop2').value,
+                document.getElementById('stop3').value,
+                document.getElementById('stop4').value
+            ];
+
+            // Geocode the origin, destination, and stops
+            const originCoords = await geocode(origin);
+            const destCoords = await geocode(destination);
+            const stopCoords = [];
+
+            for (const stop of stops) {
+                if (stop) {
+                    const coords = await geocode(stop);
+                    if (coords) {
+                        stopCoords.push(coords);
+                    }
+                }
+            }
+
+            if (!originCoords || !destCoords) {
+                alert('Could not find the start or end location. Please check your input.');
+                return;
+            }
+
+            // Prepare waypoints for OneMap API
+            const waypoints = stopCoords.map(coords => `${coords.lat},${coords.lng}`).join('|');
+            const params = new URLSearchParams({
+                start: `${originCoords.lat},${originCoords.lng}`,
+                end: `${destCoords.lat},${destCoords.lng}`,
+                waypoints: waypoints,
+                routeType: 'drive'
+            });
+
+            // Fetch the route from OneMap API
+            const oneMapUrl = 'https://developers.onemap.sg/privateapi/routingsvc/route';
+            fetch(`${oneMapUrl}?${params}`, {
+                headers: {
+                    'Authorization': `Bearer ${ONE_MAP_API_KEY}`
+                }
+            })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.route_geometry) {
+                        displayRoute(data.route_geometry);
+                        displayRouteOrder(data.route_instructions);
+                    } else {
+                        alert('Failed to plan route. Please try again.');
+                    }
+                });
+        }
+
+        function displayRoute(routeGeometry) {
+            // Clear previous route
+            if (routeLayer) {
+                map.removeLayer(routeLayer);
+            }
+
+            // Decode the polyline and display the route
+            const route = L.polyline(routeGeometry, { color: 'blue' }).addTo(map);
+            routeLayer = route;
+            map.fitBounds(route.getBounds());
+        }
+
+        function displayRouteOrder(instructions) {
+            const orderList = document.getElementById('order-list');
+            orderList.innerHTML = ''; // Clear previous list
+
+            instructions.forEach((step, index) => {
+                const li = document.createElement('li');
+                li.textContent = `${index + 1}. ${step}`;
+                orderList.appendChild(li);
+            });
+        }
+
+        async function geocode(query) {
+            const geocodeUrl = 'https://developers.onemap.sg/commonapi/search';
+            const params = new URLSearchParams({
+                searchVal: query,
+                returnGeom: 'Y',
+                getAddrDetails: 'N'
+            });
+
+            const response = await fetch(`${geocodeUrl}?${params}`);
+            const data = await response.json();
+
+            if (data.results && data.results.length > 0) {
+                return {
+                    lat: parseFloat(data.results[0].LATITUDE),
+                    lng: parseFloat(data.results[0].LONGITUDE)
+                };
+            } else {
+                return null;
+            }
+        }
+
+        // Initialize the map when the page loads
+        initMap();
+    </script>
+    <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+</body>
+</html>
